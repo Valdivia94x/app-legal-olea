@@ -7,7 +7,11 @@ from docx import Document
 import io
 
 # --- 0. CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Olea Asistente Legal", layout="centered")
+st.set_page_config(
+    page_title="Olea Asistente Legal", 
+    layout="centered",
+    page_icon="favicon.png"
+)
 
 # --- 1. CONFIGURACIÓN DE USUARIO Y CONTRASEÑA ---
 # ¡IMPORTANTE! Cámbialos por algo seguro
@@ -283,8 +287,65 @@ def mostrar_app_principal():
     # Logo
     st.sidebar.image("logo.png")
 
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Configuración de IA")
+    modelo_seleccionado = st.sidebar.selectbox(
+        "Elige el motor de IA:",
+        ("gpt-5", "gpt-5-pro"),
+        index=0, 
+        help="GPT-5 es más rápido y barato. GPT-5-Pro es más lento, caro, pero más inteligente."
+    )
+    st.sidebar.caption(f"Usando: {modelo_seleccionado}")
+    
+    # Guardamos el modelo en la memoria para que el chat lo vea
+    st.session_state['modelo_seleccionado'] = modelo_seleccionado
+
     st.title("🤖 Asistente Legal")
 
+    tab_generador, tab_chatbot = st.tabs(
+        ["Generador de Documentos", "Chatbot Legal (Demo)"]
+    )
+
+    with tab_generador:
+        mostrar_pagina_generador(modelo_seleccionado)
+
+    with tab_chatbot:
+        mostrar_pagina_chatbot()
+
+# --- 3. FUNCIONES DE WORKFLOW ---
+
+def ejecutar_flujo_general(instruccion, ejemplo_subido, modelo_seleccionado):
+    """
+    Este es el flujo de trabajo que YA CONSTRUIMOS.
+    """
+    st.success("Iniciando flujo: Documento General")
+    
+    texto_de_ejemplo = "N/A"
+    if ejemplo_subido:
+        with st.spinner("Leyendo documento de ejemplo..."):
+            texto_de_ejemplo = extraer_texto_de_docx(ejemplo_subido)
+    
+    if texto_de_ejemplo is not None:
+        with st.spinner(f"🧠✨ La IA ({modelo_seleccionado}) está redactando... Esto puede tardar varios minutos."):
+            # ¡IMPORTANTE! Tenemos que definir qué prompt usar.
+            # Por ahora, solo tenemos uno.
+            json_respuesta = generar_documento_ia_general(instruccion, texto_de_ejemplo, modelo_seleccionado)
+        
+        if json_respuesta:
+            with st.spinner("🛠️ Ensamblando el archivo .docx..."):
+                # ¡IMPORTANTE! Le decimos qué template usar
+                buffer_docx = ensamblar_docx_general(json_respuesta, TEMPLATE_FILE_GENERAL)
+            
+            if buffer_docx:
+                st.success("¡Tu documento está listo para descargar!")
+                st.download_button(
+                    label="📥 Descargar Documento Generado",
+                    data=buffer_docx,
+                    file_name="DOCUMENTO_GENERADO.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+
+def mostrar_pagina_generador(modelo_seleccionado):
     st.markdown("Genera borradores de documentos legales usando IA.")
 
     st.markdown("### 1. Selecciona el tipo de documento")
@@ -294,17 +355,6 @@ def mostrar_app_principal():
     )
 
     st.markdown("---") # Una línea divisoria
-    
-    # Selector de modelo
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### Configuración de IA")
-    modelo_seleccionado = st.sidebar.selectbox(
-        "Elige el motor de IA:",
-        ("gpt-5", "gpt-5-pro"),
-        index=0, # Por defecto usa gpt-5 (el barato)
-        help="GPT-5 es más rápido y barato. GPT-5-Pro es más lento, caro, pero más inteligente."
-    )
-    st.sidebar.caption(f"Usando: {modelo_seleccionado}")
 
     instruccion = st.text_area(
         "2. Escribe las instrucciones del documento que necesitas:",
@@ -351,38 +401,128 @@ def mostrar_app_principal():
                                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                             )
 
-# --- 3. FUNCIONES DE WORKFLOW ---
+# --- ¡NUEVA FUNCIÓN PARA EL CHATBOT! ---
 
-def ejecutar_flujo_general(instruccion, ejemplo_subido, modelo_seleccionado):
+# --- CEREBRO DEL CHATBOT (SIMPLIFICADO) ---
+def llamar_chat_ia(historial_mensajes, modelo_ia):
     """
-    Este es el flujo de trabajo que YA CONSTRUIMOS.
+    Función 'Cerebro' simple para el chatbot.
+    Usa el endpoint v1/chat/completions (perfecto para gpt-4o-mini).
     """
-    st.success("Iniciando flujo: Documento General")
+    try:
+        completion = client.chat.completions.create(
+            model=modelo_ia, 
+            messages=historial_mensajes
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        st.error(f"Error al llamar a la API del chat: {e}")
+        return None
+
+# --- PÁGINA DEL CHATBOT (V 1.5 - ANALIZADOR DE DOCS) ---
+def mostrar_pagina_chatbot():
+    """
+    Contiene la lógica para el chatbot simple,
+    AHORA CON CAPACIDAD DE ANALIZAR DOCUMENTOS.
+    """
     
-    texto_de_ejemplo = "N/A"
-    if ejemplo_subido:
-        with st.spinner("Leyendo documento de ejemplo..."):
-            texto_de_ejemplo = extraer_texto_de_docx(ejemplo_subido)
+    st.warning("⚠️ **Modo Demo:** Este chatbot es una IA generativa (gpt-4o-mini). Sus respuestas pueden ser imprecisas. No lo uses para consejos legales reales.")
     
-    if texto_de_ejemplo is not None:
-        with st.spinner(f"🧠✨ La IA ({modelo_seleccionado}) está redactando... Esto puede tardar varios minutos."):
-            # ¡IMPORTANTE! Tenemos que definir qué prompt usar.
-            # Por ahora, solo tenemos uno.
-            json_respuesta = generar_documento_ia_general(instruccion, texto_de_ejemplo, modelo_seleccionado)
+    # --- ¡NUEVO! El File Uploader ---
+    uploaded_doc = st.file_uploader(
+        "Sube un .docx para analizarlo:",
+        type="docx",
+        key="chatbot_file_uploader" # ¡Un 'key' único!
+    )
+    
+    # --- ¡NUEVA! Lógica de carga de documento ---
+    if uploaded_doc is not None:
+        # Usamos un 'if' con una variable de sesión para evitar 
+        # que se recargue y borre el chat con cada acción.
+        if "documento_analizado" not in st.session_state or st.session_state.documento_analizado != uploaded_doc.name:
+            with st.spinner(f"Analizando '{uploaded_doc.name}'..."):
+                contexto_documento = extraer_texto_de_docx(uploaded_doc)
+                if contexto_documento:
+                    # ¡Iniciamos un NUEVO chat con el contexto!
+                    st.session_state.chat_history = [
+                        {
+                            "role": "system",
+                            "content": f"""
+                            Eres un asistente legal experto. Te han pasado el siguiente documento como contexto.
+                            Tu trabajo es responder a las preguntas del usuario basándote ÚNICA Y EXCLUSIVAMENTE en el texto de este documento.
+                            Si la respuesta no está en el texto, debes decir "La respuesta no se encuentra en el documento."
+                            No inventes información.
+                            ---
+                            CONTEXTO DEL DOCUMENTO (Nombre: {uploaded_doc.name}):
+                            {contexto_documento}
+                            ---
+                            """
+                        },
+                        {
+                            "role": "assistant",
+                            "content": f"He leído el documento '{uploaded_doc.name}'. ¿Qué necesitas saber sobre él?"
+                        }
+                    ]
+                    st.session_state.documento_analizado = uploaded_doc.name # Marcamos que ya lo analizamos
+                    st.success("Documento analizado. ¡Puedes empezar a chatear con él!")
+                else:
+                    st.error("No se pudo extraer texto del documento.")
+                    
+    # --- Lógica de Chat (casi igual que antes) ---
+    
+    # Forzar el modelo rápido
+    modelo_chatbot = "gpt-4o-mini"
+
+    # Inicializar historial (si no se ha subido un doc)
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = [
+            {"role": "assistant", "content": "Hola, soy el asistente legal. Sube un documento para analizar o hazme una pregunta general (sin contexto)."}
+        ]
+
+    # --- 1. PINTAR EL HISTORIAL ANTIGUO (CON FILTRO) ---
+    for message in st.session_state.chat_history:
         
-        if json_respuesta:
-            with st.spinner("🛠️ Ensamblando el archivo .docx..."):
-                # ¡IMPORTANTE! Le decimos qué template usar
-                buffer_docx = ensamblar_docx_general(json_respuesta, TEMPLATE_FILE_GENERAL)
+        # --- ¡EL ARREGLO ESTÁ AQUÍ! ---
+        # Solo muestra los mensajes si NO son del "sistema"
+        if message["role"] != "system":
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+    # --- FIN DEL ARREGLO ---
+
+    # --- 2. PEDIR NUEVO INPUT (Se pega al fondo) ---
+    # (Esto PINTA la caja de texto en la parte inferior)
+    if prompt := st.chat_input("Escribe tu pregunta aquí..."):
+        
+        # --- ¡INICIO DE CAMBIOS! ---
+        
+        # 1. Guardar mensaje del usuario en la memoria
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
+        
+        # (¡BORRAMOS EL 'with st.chat_message("user")' DE AQUÍ!)
+
+        # 2. Generar respuesta de la IA (¡NO LA PINTAMOS AÚN!)
+        with st.spinner("Pensando..."): # El spinner SÍ está bien aquí
+            respuesta_ia = llamar_chat_ia(
+                st.session_state.chat_history, 
+                modelo_chatbot
+            )
             
-            if buffer_docx:
-                st.success("¡Tu documento está listo para descargar!")
-                st.download_button(
-                    label="📥 Descargar Documento Generado",
-                    data=buffer_docx,
-                    file_name="DOCUMENTO_GENERADO.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            if respuesta_ia:
+                # 3. Guardar respuesta de la IA en la memoria
+                st.session_state.chat_history.append(
+                    {"role": "assistant", "content": respuesta_ia}
                 )
+            else:
+                st.error("No se pudo obtener respuesta de la IA.")
+        
+        # (¡BORRAMOS EL 'with st.chat_message("assistant")' DE AQUÍ!)
+        
+        # 4. Forzar un refresco de la página
+        # Esto hace que el script se reinicie y el 'for' loop 
+        # de arriba pinte los mensajes nuevos.
+        st.rerun()
+        
+        # --- FIN DE CAMBIOS ---
 
 # --- 4. FUNCIONES DE LOGIN Y LOGOUT ---
 def mostrar_login():
