@@ -180,20 +180,31 @@ def generar_pagare_ia(instruccion_usuario, texto_de_ejemplo, modelo_ia):
         st.error(f"ERROR INESPERADO DE API: {e}")
         return None
 
-def ensamblar_docx_general(json_data):
+# --- ENSAMBLADOR 1.0 (GENERAL) - CORREGIDO V1.2 ---
+def ensamblar_docx_general(json_data, archivo_template): # <--- CAMBIO 1: Acepta el 2do argumento
+    """
+    Toma el JSON de la IA y construye un .docx
+    usando el template general.
+    """
     try:
-        if not os.path.exists(TEMPLATE_FILE_GENERAL):
-            st.error(f"¡Error crítico! No se encuentra el archivo '{TEMPLATE_FILE_GENERAL}'.")
+        # --- CAMBIO 2: Usamos la variable 'archivo_template' ---
+        if not os.path.exists(archivo_template): 
+            st.error(f"¡Error crítico! No se encuentra el archivo '{archivo_template}'.")
             return None
             
-        doc = Document(TEMPLATE_FILE_GENERAL)
+        doc = Document(archivo_template) # <--- CAMBIO 3: Usamos la variable
+        # --- FIN DE CAMBIOS ---
+        
+        # (El resto del código ya estaba bien)
         datos = json.loads(json_data)
         
         for item in datos:
             texto = item.get('text', '')
-            estilo = item.get('style', 'Parrafo_Justificado')
+            estilo = item.get('style', 'Parrafo_Justificado') 
             
             if estilo not in NOMBRES_DE_ESTILOS:
+                # Usamos st.warning para que se vea en la app
+                st.warning(f"Advertencia: La IA usó un estilo desconocido ('{estilo}'). Usando 'Parrafo_Justificado'.")
                 estilo = 'Parrafo_Justificado'
             
             doc.add_paragraph(texto, style=estilo)
@@ -203,8 +214,12 @@ def ensamblar_docx_general(json_data):
         buffer.seek(0)
         return buffer
         
+    except json.JSONDecodeError:
+        st.error(f"ERROR CRÍTICO: La IA no devolvió un JSON válido. No se puede ensamblar.")
+        st.code(json_data) # Muestra el JSON roto
+        return None
     except Exception as e:
-        st.error(f"Error durante el ensamblaje del .docx: {e}")
+        st.error(f"ERROR durante el ensamblaje del .docx: {e}")
         return None
     
 # --- ENSAMBLADOR 2.0: Constructor de Pagarés (con Tabla) ---
