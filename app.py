@@ -30,7 +30,7 @@ except Exception as e:
     st.stop() # Detiene la app si no hay API key
 
 # Constantes del Template
-NOMBRES_DE_ESTILOS = ['Titulo_1', 'Parrafo_Justificado', 'Lista_Numerada', 'Estilo_Firma']
+NOMBRES_DE_ESTILOS = ['Titulo_1', 'Parrafo_Justificado', 'Lista_Numerada', 'Estilo_Firma', 'Lista_Manual']
 TEMPLATE_FILE_GENERAL = 'template_maestro.docx'
 TEMPLATE_FILE_PAGARE = 'template_pagare.docx'
 
@@ -67,7 +67,10 @@ def generar_documento_ia_general(instruccion_usuario, texto_de_ejemplo, modelo_i
     - Los únicos valores permitidos para "style" son: {lista_estilos_str}.
     - Usa 'Titulo_1' para todos los títulos.
     - Usa 'Parrafo_Justificado' para el texto principal.
-    - Usa 'Lista_Numerada' para listas.
+    - REGLAS DE LISTAS:
+        - Para cláusulas largas que deben continuar (ej. 'CLÁUSULA PRIMERA', 'CLÁUSULA SEGUNDA'), usa el estilo 'Lista_Numerada'.
+        - Para cualquier OTRA lista (ej. un Orden del Día, listas de requisitos, etc.) que deba empezar en '1.', usa el estilo 'Lista_Manual'.
+        - IMPORTANTE: Cuando uses 'Lista_Manual', DEBES escribir tú mismo el número y un tabulador. Ejemplo: "1.\t[Texto del punto uno]", "2.\t[Texto del punto dos]", etc.
     - Usa 'Estilo_Firma' para las firmas.
     EJEMPLOS DE TONO (PARA IMITAR):
     ---
@@ -129,6 +132,10 @@ def generar_pagare_ia(instruccion_usuario, texto_de_ejemplo, modelo_ia):
        - Usa 'Titulo_1' para todos los títulos.
        - Usa 'Parrafo_Justificado' para el texto principal.
        - Usa 'Estilo_Firma' para las firmas.
+       - REGLAS DE LISTAS:
+           - Para cláusulas largas que deben continuar (ej. 'CLÁUSULA PRIMERA'), usa el estilo 'Lista_Numerada'.
+           - Para cualquier OTRA lista que deba empezar en '1.', usa el estilo 'Lista_Manual'.
+           - IMPORTANTE: Cuando uses 'Lista_Manual', DEBES escribir tú mismo el número y un tabulador. Ejemplo: "1.\t[Texto del punto uno]", "2.\t[Texto del punto dos]", etc.
        - Incluye en la prosa los montos calculados (intereses, total).
 
     2. CLAVE "tabla_amortizacion":
@@ -222,20 +229,22 @@ def ensamblar_docx_general(json_data, archivo_template): # <--- CAMBIO 1: Acepta
         st.error(f"ERROR durante el ensamblaje del .docx: {e}")
         return None
     
-# --- ENSAMBLADOR 2.0: Constructor de Pagarés (con Tabla) ---
+# --- ENSAMBLADOR 2.0 (PAGARÉ) - CORREGIDO V1.7 (Crea la tabla) ---
 def ensamblar_pagare_en_memoria(json_data, archivo_template):
     """
     Toma el JSON de pagaré (prosa y tabla) y construye un .docx EN MEMORIA.
+    Esta versión CREA la tabla desde cero al final del documento.
     """
     try:
         if not os.path.exists(archivo_template):
             st.error(f"¡Error crítico! No se encuentra el archivo '{archivo_template}'.")
             return None
             
-        doc = Document(archivo_template)
+        # 1. Cargar el template (que ahora NO tiene tabla)
+        doc = Document(archivo_template) 
         datos = json.loads(json_data)
         
-        # --- 1. Ensamblar la Prosa ---
+        # --- 2. Ensamblar la Prosa PRIMERO ---
         st.write("Ensamblando prosa del pagaré...")
         prosa_items = datos.get("prosa", [])
         for item in prosa_items:
@@ -245,42 +254,44 @@ def ensamblar_pagare_en_memoria(json_data, archivo_template):
                 estilo = 'Parrafo_Justificado'
             doc.add_paragraph(texto, style=estilo)
             
-        # --- 2. Ensamblar la Tabla de Amortización ---
+        # --- 3. Ensamblar la Tabla de Amortización AL FINAL ---
         tabla_datos = datos.get("tabla_amortizacion", [])
         if tabla_datos:
-            st.write("Ensamblando tabla de amortización...")
+            st.write("Creando y ensamblando tabla de amortización...")
             
-            if not doc.tables:
-                st.error("Error: El template del pagaré no contiene una tabla. No se puede generar la amortización.")
-                return None
+            # ¡AQUÍ CREAMOS LA TABLA!
+            # (Asumimos 4 columnas. Si necesitas más, cambia el 'cols=4')
+            table = doc.add_table(rows=1, cols=4) 
+            table.style = 'Table Grid' # Estilo básico de Word
             
-            table = doc.tables[0] # Asumimos que la primera tabla es la de amortización
+            # Rellenar los encabezados (hardcodeados)
+            hdr_cells = table.rows[0].cells
+            hdr_cells[0].text = 'Pago No.'
+            hdr_cells[1].text = 'Interés'
+            hdr_cells[2].text = 'Capital'
+            hdr_cells[3].text = 'Saldo Insoluto'
             
-            # Obtener encabezados (si se necesitan, para validar)
-            # headers = [cell.text for cell in table.rows[0].cells] 
-            
-            # ---- NUEVO CÓDIGO V 1.1 ---
+            # (Opcional: Poner encabezados en negrita)
+            for cell in hdr_cells:
+                cell.paragraphs[0].runs[0].font.bold = True
+
+            # Rellenar las filas de datos
             for fila_data in tabla_datos:
-                row_cells = table.add_row().cells
-
-                # Convertimos el objeto JSON (ej. {"Pago No.": 1, "Interés": 921})
-                # en una simple lista de sus valores (ej. [1, 921, ...])
+                row_cells = table.add_row().cells # Añade una nueva fila
+                
                 valores = list(fila_data.values())
-
-                # Asignamos los valores por ORDEN, no por nombre.
-                # Esto asume que la IA, aunque falle en los nombres,
-                # al menos respetará el orden de los datos.
+                
                 try:
                     row_cells[0].text = str(valores[0]) # Pago No.
                     row_cells[1].text = f"{float(valores[1]):,.2f}" # Interés
                     row_cells[2].text = f"{float(valores[2]):,.2f}" # Capital
                     row_cells[3].text = f"{float(valores[3]):,.2f}" # Saldo
                 except Exception as e:
-                    # Si algo falla (ej. la IA mandó texto en lugar de números)
-                    # ponemos un error en la fila.
                     st.warning(f"Error al procesar fila de tabla: {e}. Datos: {valores}")
                     row_cells[0].text = "ERROR"
-            # ---- FIN DE NUEVO CÓDIGO ---
+            
+            # Añadir un espacio después de la tabla
+            doc.add_paragraph("") 
                 
         # Guardar el documento en un buffer de memoria
         buffer = io.BytesIO()
@@ -441,7 +452,7 @@ def mostrar_pagina_chatbot():
     AHORA CON CAPACIDAD DE ANALIZAR DOCUMENTOS.
     """
     
-    st.warning("⚠️ **Modo Demo:** Este chatbot es una IA generativa (gpt-4o-mini). Sus respuestas pueden ser imprecisas. No lo uses para consejos legales reales.")
+    st.warning("⚠️ **Modo Demo:** Este chatbot es una IA generativa (gpt-4o-mini). Sus respuestas pueden ser imprecisas.")
     
     # --- ¡NUEVO! El File Uploader ---
     uploaded_doc = st.file_uploader(
