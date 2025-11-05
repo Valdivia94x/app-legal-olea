@@ -1,11 +1,11 @@
-# 🤖 Olea Asistente Legal (app-legal-olea) V1.2
+# 🤖 Olea Asistente Legal (app-legal-olea) V1.3
 
 Aplicación en Streamlit y Python que utiliza IA (OpenAI GPT-5 y GPT-4o-Mini) para asistir en tareas legales.
 
 Este proyecto V1.6 incluye un sistema de login seguro y una interfaz de pestañas con dos herramientas principales:
 
 1.  **Generador de Documentos:** Crea documentos "Generales" (basados en texto) o "Pagarés" (con tablas de amortización calculadas) usando plantillas de Word e IA para imitar el tono de un ejemplo.
-2.  **Chatbot Analizador:** Un chatbot (GPT-4o-Mini) que puede "leer" un `.docx` subido por el usuario y responder preguntas específicas sobre su contenido.
+2.  **Chatbot Analizador:** Un chatbot (GPT-4o-Mini) que puede "leer" un `.docx` o `.pdf` subido por el usuario y responder preguntas específicas sobre su contenido.
 
 ## 🚀 Componentes del Proyecto
 
@@ -15,7 +15,7 @@ El sistema funciona con 5 archivos clave que deben estar en la misma carpeta:
 2.  **`requirements.txt`**: La lista de dependencias de Python necesarias.
 3.  **`template_maestro.docx`**: El molde de Word para el flujo de "Documento General".
 4.  **`template_pagare.docx`**: El molde de Word para el flujo de "Pagaré" (contiene la tabla vacía).
-5.  **`logo.png` / `favicon.png`**: Los archivos de imagen para la marca.
+5.  **`logo.png` / `logoOscuro.png` / `favicon.png`**: Los archivos de imagen para la marca.
 
 ## ⚙️ Instalación (Local)
 

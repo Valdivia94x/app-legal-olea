@@ -5,6 +5,7 @@ import time
 import streamlit as st
 from docx import Document
 import io
+import fitz
 
 # --- 0. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -34,22 +35,49 @@ NOMBRES_DE_ESTILOS = ['Titulo_1', 'Parrafo_Justificado', 'Lista_Numerada', 'Esti
 TEMPLATE_FILE_GENERAL = 'template_maestro.docx'
 TEMPLATE_FILE_PAGARE = 'template_pagare.docx'
 
+# --- COMPONENTE 2: El "Extractor Universal" (V1.9) ---
 @st.cache_data
-def extraer_texto_de_docx(archivo_subido):
+def extraer_texto_del_documento(archivo_subido):
+    """
+    Extractor inteligente V1.9: Lee .docx y .pdf
+    Toma un archivo subido por Streamlit (UploadedFile)
+    y devuelve una sola cadena de texto.
+    """
     try:
-        doc = Document(io.BytesIO(archivo_subido.read()))
-        texto_completo = []
-        for parrafo in doc.paragraphs:
-            if parrafo.text.strip():
-                texto_completo.append(parrafo.text)
-        for tabla in doc.tables:
-            for fila in tabla.rows:
-                for celda in fila.cells:
-                    if celda.text.strip():
-                        texto_completo.append(celda.text)
-        return '\n'.join(texto_completo)
+        # 1. Leer el archivo en memoria una sola vez
+        file_bytes = archivo_subido.read()
+        
+        # 2. Decidir qué herramienta usar
+        if archivo_subido.type == "application/pdf":
+            # --- LÓGICA PARA PDF (NUEVO) ---
+            st.write("Detectado: PDF. Usando PyMuPDF (fitz)...")
+            texto_completo = []
+            with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+                for page in doc:
+                    texto_completo.append(page.get_text())
+            return '\n'.join(texto_completo)
+
+        elif archivo_subido.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            # --- LÓGICA PARA DOCX (LA ANTIGUA) ---
+            st.write("Detectado: DOCX. Usando python-docx...")
+            doc = Document(io.BytesIO(file_bytes))
+            texto_completo = []
+            for parrafo in doc.paragraphs:
+                if parrafo.text.strip():
+                    texto_completo.append(parrafo.text)
+            for tabla in doc.tables:
+                for fila in tabla.rows:
+                    for celda in fila.cells:
+                        if celda.text.strip():
+                            texto_completo.append(celda.text)
+            return '\n'.join(texto_completo)
+        
+        else:
+            st.error(f"Tipo de archivo no soportado: {archivo_subido.type}")
+            return None
+            
     except Exception as e:
-        st.error(f"Error al leer el archivo DOCX: {e}")
+        st.error(f"Error al leer el archivo ({archivo_subido.name}): {e}")
         return None
 
 @st.cache_data
@@ -349,7 +377,7 @@ def ejecutar_flujo_general(instruccion, ejemplo_subido, modelo_seleccionado):
     texto_de_ejemplo = "N/A"
     if ejemplo_subido:
         with st.spinner("Leyendo documento de ejemplo..."):
-            texto_de_ejemplo = extraer_texto_de_docx(ejemplo_subido)
+            texto_de_ejemplo = extraer_texto_del_documento(ejemplo_subido)
     
     if texto_de_ejemplo is not None:
         with st.spinner(f"🧠✨ La IA ({modelo_seleccionado}) está redactando... Esto puede tardar varios minutos."):
@@ -389,8 +417,8 @@ def mostrar_pagina_generador(modelo_seleccionado):
     )
 
     ejemplo_subido = st.file_uploader(
-        "3. (Opcional) Sube un .docx de ejemplo para imitar el tono:",
-        type="docx"
+        "3. (Opcional) Sube un .docx o pfd de ejemplo para imitar el tono:",
+        type=["docx", "pdf"]
     )
 
     if st.button("🚀 Generar Documento"):
@@ -406,7 +434,7 @@ def mostrar_pagina_generador(modelo_seleccionado):
                 texto_de_ejemplo = "N/A"
                 if ejemplo_subido:
                     with st.spinner("Leyendo documento de ejemplo..."):
-                        texto_de_ejemplo = extraer_texto_de_docx(ejemplo_subido)
+                        texto_de_ejemplo = extraer_texto_del_documento(ejemplo_subido)
                 
                 if texto_de_ejemplo is not None:
                     with st.spinner(f"🧠✨ La IA ({modelo_seleccionado}) está redactando y calculando..."):
@@ -457,7 +485,7 @@ def mostrar_pagina_chatbot():
     # --- ¡NUEVO! El File Uploader ---
     uploaded_doc = st.file_uploader(
         "Sube un .docx para analizarlo:",
-        type="docx",
+        type=["docx", "pdf"],
         key="chatbot_file_uploader" # ¡Un 'key' único!
     )
     
@@ -467,7 +495,7 @@ def mostrar_pagina_chatbot():
         # que se recargue y borre el chat con cada acción.
         if "documento_analizado" not in st.session_state or st.session_state.documento_analizado != uploaded_doc.name:
             with st.spinner(f"Analizando '{uploaded_doc.name}'..."):
-                contexto_documento = extraer_texto_de_docx(uploaded_doc)
+                contexto_documento = extraer_texto_del_documento(uploaded_doc)
                 if contexto_documento:
                     # ¡Iniciamos un NUEVO chat con el contexto!
                     st.session_state.chat_history = [
