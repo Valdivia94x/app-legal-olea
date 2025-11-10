@@ -134,49 +134,44 @@ def generar_documento_ia_general(instruccion_usuario, texto_de_ejemplo, modelo_i
         st.error(f"ERROR INESPERADO DE API: {e}")
         return None
     
-# --- CEREBRO 2.0: Generador de Pagarés (con Tabla) ---
+# --- CEREBRO 2.0 (PAGARÉ) - V2.0 (CON CÁLCULO DE IVA) ---
 @st.cache_data
 def generar_pagare_ia(instruccion_usuario, texto_de_ejemplo, modelo_ia):
-    st.info(f"Conectando con la IA ({modelo_ia}) para el Pagaré... Esto puede tardar varios minutos.")
+    st.info(f"Conectando con la IA ({modelo_ia}) para el Pagaré [ChatEndpoint]...")
     
     lista_estilos_str = ", ".join([f"'{s}'" for s in NOMBRES_DE_ESTILOS])
     
-    # --- ¡EL PROMPT CLAVE para JSON anidado y cálculos! ---
+    # --- ¡PROMPT V2.0 ACTUALIZADO CON IVA! ---
     prompt_final = f"""
     PRIORIDAD ABSOLUTA: Tu única y exclusiva respuesta debe ser un objeto JSON válido.
     Tu respuesta debe comenzar con un corchete de apertura {{ y terminar con un corchete de cierre }}.
     No escribas NADA antes del {{ ni NADA después del }}.
 
-    Eres un abogado senior 'todoterreno' en México, experto en documentos mercantiles.
+    Eres un abogado y contador experto en México.
     
     FORMATO DE SALIDA OBLIGATORIO:
     Un objeto JSON con dos claves principales: "prosa" y "tabla_amortizacion".
 
     1. CLAVE "prosa":
-       Una lista de objetos JSON para el texto principal del pagaré:
+       Una lista de objetos JSON para el texto legal del pagaré.
        "prosa": [{{"style": "...", "text": "..."}}]
-       REGLAS DE ESTILO OBLIGATORIAS PARA "prosa":
-       - Los únicos valores permitidos para "style" son: {lista_estilos_str}.
-       - Usa 'Titulo_1' para todos los títulos.
-       - Usa 'Parrafo_Justificado' para el texto principal.
-       - Usa 'Estilo_Firma' para las firmas.
-       - REGLAS DE LISTAS:
-           - Para cláusulas largas que deben continuar (ej. 'CLÁUSULA PRIMERA'), usa el estilo 'Lista_Numerada'.
-           - Para cualquier OTRA lista que deba empezar en '1.', usa el estilo 'Lista_Manual'.
-           - IMPORTANTE: Cuando uses 'Lista_Manual', DEBES escribir tú mismo el número y un tabulador. Ejemplo: "1.\t[Texto del punto uno]", "2.\t[Texto del punto dos]", etc.
-       - Incluye en la prosa los montos calculados (intereses, total).
+       (Usa los estilos: {lista_estilos_str})
 
     2. CLAVE "tabla_amortizacion":
-       Una lista de objetos JSON con los datos de cada pago de la tabla de amortización:
+       Una lista de objetos JSON con los datos de cada pago de la tabla de amortización.
+       
+       ¡TAREA DE CÁLCULO CLAVE!:
+       Debes calcular los intereses Y ADEMÁS el 16% de IVA sobre dichos intereses.
+       El "Pago Total" será la suma de (Capital + Interés + IVA del Interés).
+
+       FORMATO JSON DE TABLA (6 Columnas):
        "tabla_amortizacion": [
-         {{"Pago No.": 1, "Interés": 100.00, "Capital": 900.00, "Saldo Insoluto": 9900.00}},
-         {{"Pago No.": 2, "Interés": 99.00, "Capital": 901.00, "Saldo Insoluto": 8999.00}}
-         // ...y así sucesivamente por cada pago
+         {{"Pago No.": 1, "Interés": 100.00, "IVA del Interés": 16.00, "Capital": 900.00, "Pago Total": 1016.00, "Saldo Insoluto": 9900.00}}
        ]
+       
        REGLAS DE FORMATO PARA "tabla_amortizacion":
-       - Las claves de cada objeto deben coincidir exactamente con los encabezados de la tabla: "Pago No.", "Interés", "Capital", "Saldo Insoluto".
-       - Los valores deben ser números (float para Interés, Capital, Saldo).
-       - No incluyas la fila de encabezados en este JSON, solo los datos.
+       - Las claves y el ORDEN deben ser exactamente: "Pago No.", "Interés", "IVA del Interés", "Capital", "Pago Total", "Saldo Insoluto".
+       - Los valores deben ser números (float para los montos).
 
     EJEMPLOS DE TONO (PARA IMITAR):
     ---
@@ -188,31 +183,27 @@ def generar_pagare_ia(instruccion_usuario, texto_de_ejemplo, modelo_ia):
     
     Recuerda: Tu respuesta debe ser solo el JSON, empezando con {{ y terminando con }}.
     """
+    
     try:
         start_time = time.time()
-        completion = client.responses.create(
+        
+        completion = client.chat.completions.create(
             model=modelo_ia, 
-            input=prompt_final,
-            max_output_tokens=20000
+            messages=[
+                {"role": "system", "content": prompt_final},
+                {"role": "user", "content": instruccion_usuario}
+            ],
+            response_format={"type": "json_object"}, 
+            max_completion_tokens=20000
         )
         end_time = time.time()
         st.info(f"Respuesta recibida de la IA en {end_time - start_time:.2f} segundos.")
         
-        # OJO: Ahora busca { y } porque es un objeto JSON, no una lista.
-        respuesta_cruda = completion.output_text
-        start_index = respuesta_cruda.find('{')
-        end_index = respuesta_cruda.rfind('}')
-        
-        if start_index == -1 or end_index == -1:
-            st.error("Error: La IA no devolvió un JSON de pagaré válido. Respuesta cruda:")
-            st.code(respuesta_cruda)
-            return None
-            
-        json_limpio = respuesta_cruda[start_index : end_index + 1]
-        return json_limpio
+        json_respuesta = completion.choices[0].message.content
+        return json_respuesta
         
     except Exception as e:
-        st.error(f"ERROR INESPERADO DE API: {e}")
+        st.error(f"ERROR INESPERADO DE API (Pagaré V2.0): {e}")
         return None
 
 # --- ENSAMBLADOR 1.0 (GENERAL) - CORREGIDO V1.2 ---
@@ -257,10 +248,11 @@ def ensamblar_docx_general(json_data, archivo_template): # <--- CAMBIO 1: Acepta
         st.error(f"ERROR durante el ensamblaje del .docx: {e}")
         return None
     
-# --- ENSAMBLADOR 2.0 (PAGARÉ) - CORREGIDO V1.7 (Crea la tabla) ---
+# --- ENSAMBLADOR 2.0 (PAGARÉ) - V2.0 (Dibuja 6 columnas con IVA) ---
 def ensamblar_pagare_en_memoria(json_data, archivo_template):
     """
-    Toma el JSON de pagaré (prosa y tabla) y construye un .docx EN MEMORIA.
+    Toma el JSON de pagaré (prosa y tabla V2.0 con IVA) 
+    y construye un .docx EN MEMORIA.
     Esta versión CREA la tabla desde cero al final del documento.
     """
     try:
@@ -268,11 +260,10 @@ def ensamblar_pagare_en_memoria(json_data, archivo_template):
             st.error(f"¡Error crítico! No se encuentra el archivo '{archivo_template}'.")
             return None
             
-        # 1. Cargar el template (que ahora NO tiene tabla)
         doc = Document(archivo_template) 
         datos = json.loads(json_data)
         
-        # --- 2. Ensamblar la Prosa PRIMERO ---
+        # --- 1. Ensamblar la Prosa (Sin cambios) ---
         st.write("Ensamblando prosa del pagaré...")
         prosa_items = datos.get("prosa", [])
         for item in prosa_items:
@@ -282,46 +273,48 @@ def ensamblar_pagare_en_memoria(json_data, archivo_template):
                 estilo = 'Parrafo_Justificado'
             doc.add_paragraph(texto, style=estilo)
             
-        # --- 3. Ensamblar la Tabla de Amortización AL FINAL ---
+        # --- 2. Ensamblar la Tabla de Amortización (¡CON 6 COLUMNAS!) ---
         tabla_datos = datos.get("tabla_amortizacion", [])
         if tabla_datos:
-            st.write("Creando y ensamblando tabla de amortización...")
+            st.write("Creando y ensamblando tabla de amortización (con IVA)...")
             
-            # ¡AQUÍ CREAMOS LA TABLA!
-            # (Asumimos 4 columnas. Si necesitas más, cambia el 'cols=4')
-            table = doc.add_table(rows=1, cols=4) 
-            table.style = 'Table Grid' # Estilo básico de Word
+            # --- ¡CAMBIO 1: Creamos 6 columnas! ---
+            table = doc.add_table(rows=1, cols=6) 
+            table.style = 'Table Grid'
             
-            # Rellenar los encabezados (hardcodeados)
+            # --- ¡CAMBIO 2: Rellenamos 6 encabezados! ---
             hdr_cells = table.rows[0].cells
             hdr_cells[0].text = 'Pago No.'
             hdr_cells[1].text = 'Interés'
-            hdr_cells[2].text = 'Capital'
-            hdr_cells[3].text = 'Saldo Insoluto'
+            hdr_cells[2].text = 'IVA del Interés' # <-- NUEVO
+            hdr_cells[3].text = 'Capital'
+            hdr_cells[4].text = 'Pago Total'      # <-- NUEVO
+            hdr_cells[5].text = 'Saldo Insoluto'
             
             # (Opcional: Poner encabezados en negrita)
             for cell in hdr_cells:
                 cell.paragraphs[0].runs[0].font.bold = True
 
-            # Rellenar las filas de datos
+            # --- ¡CAMBIO 3: Rellenamos 6 celdas! ---
             for fila_data in tabla_datos:
                 row_cells = table.add_row().cells # Añade una nueva fila
                 
+                # Usamos la V1.8 (orden) que es más segura
                 valores = list(fila_data.values())
                 
                 try:
                     row_cells[0].text = str(valores[0]) # Pago No.
                     row_cells[1].text = f"{float(valores[1]):,.2f}" # Interés
-                    row_cells[2].text = f"{float(valores[2]):,.2f}" # Capital
-                    row_cells[3].text = f"{float(valores[3]):,.2f}" # Saldo
+                    row_cells[2].text = f"{float(valores[2]):,.2f}" # IVA (Nuevo)
+                    row_cells[3].text = f"{float(valores[3]):,.2f}" # Capital
+                    row_cells[4].text = f"{float(valores[4]):,.2f}" # Pago Total (Nuevo)
+                    row_cells[5].text = f"{float(valores[5]):,.2f}" # Saldo
                 except Exception as e:
                     st.warning(f"Error al procesar fila de tabla: {e}. Datos: {valores}")
                     row_cells[0].text = "ERROR"
             
-            # Añadir un espacio después de la tabla
             doc.add_paragraph("") 
                 
-        # Guardar el documento en un buffer de memoria
         buffer = io.BytesIO()
         doc.save(buffer)
         buffer.seek(0)
