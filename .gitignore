@@ -1,0 +1,2 @@
+# Ignorar solo el archivo de secretos, no la carpeta
+.streamlit/secrets.toml

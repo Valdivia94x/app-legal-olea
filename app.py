@@ -15,9 +15,32 @@ st.set_page_config(
 )
 
 # --- 1. CONFIGURACIÓN DE USUARIO Y CONTRASEÑA ---
-# ¡IMPORTANTE! Cámbialos por algo seguro
-USUARIO_CORRECTO = "admin"
-PASSWORD_CORRECTO = "1234"
+USUARIO_CORRECTO = None
+PASSWORD_CORRECTO = None
+
+# Primero, intenta leer desde los "Secrets" de Streamlit Cloud (o local)
+try:
+    USUARIO_CORRECTO = st.secrets["USUARIO_CORRECTO"]
+    PASSWORD_CORRECTO = st.secrets["PASSWORD_CORRECTO"]
+    OPENAI_API_KEY_VAL = st.secrets["OPENAI_API_KEY"]
+    # st.session_state['deploy_mode'] = 'Streamlit Cloud' # Opcional para debug
+
+# Si falla (porque no estamos en Streamlit Cloud)...
+except (KeyError, FileNotFoundError):
+    # ...entonces, lee desde las Variables de Entorno del Sistema
+    # st.session_state['deploy_mode'] = 'Servidor Propio (Variables de Entorno)' # Opcional
+    USUARIO_CORRECTO = os.environ.get("USUARIO_CORRECTO")
+    PASSWORD_CORRECTO = os.environ.get("PASSWORD_CORRECTO")
+    OPENAI_API_KEY_VAL = os.environ.get("OPENAI_API_KEY")
+
+# Asignamos la llave de API al cliente de OpenAI
+try:
+    client = openai.OpenAI(api_key=OPENAI_API_KEY_VAL)
+except Exception as e:
+    st.error(f"Error al conectar con OpenAI. ¿Configuraste las variables de entorno/secretos?")
+    st.stop()
+
+# --- ¡FIN DEL BLOQUE DE CREDENCIALES! ---
 
 # --- 2. CONFIGURACIÓN GLOBAL Y COMPONENTES 1, 2, 3, 4 ---
 # (Todo nuestro código de "motor" va aquí, definido como funciones)
@@ -466,39 +489,43 @@ def llamar_chat_ia(historial_mensajes, modelo_ia):
         st.error(f"Error al llamar a la API del chat: {e}")
         return None
 
-# --- PÁGINA DEL CHATBOT (V 1.5 - ANALIZADOR DE DOCS) ---
+# --- PÁGINA DEL CHATBOT (V 1.7 - ANALIZADOR CON RAZONAMIENTO) ---
 def mostrar_pagina_chatbot():
     """
-    Contiene la lógica para el chatbot simple,
-    AHORA CON CAPACIDAD DE ANALIZAR DOCUMENTOS.
+    Contiene la lógica para el chatbot (V1.7),
+    CON PERMISO DE RAZONAR SOBRE EL DOCUMENTO.
     """
     
-    st.warning("⚠️ **Modo Demo:** Este chatbot es una IA generativa (gpt-4o-mini). Sus respuestas pueden ser imprecisas.")
+    st.warning("⚠️ **Modo Demo:** Este chatbot es una IA generativa (gpt-4o). Sus respuestas pueden ser imprecisas. Usa tu criterio profesional.")
     
-    # --- ¡NUEVO! El File Uploader ---
+    # Forzar el modelo rápido
+    modelo_chatbot = "gpt-4o" # ¡Cambiamos a gpt-4o (no el mini)!
+
+    # --- LÓGICA DE CARGA DE DOCUMENTO ---
     uploaded_doc = st.file_uploader(
-        "Sube un .docx para analizarlo:",
+        "Sube un .docx o .pdf para analizarlo:",
         type=["docx", "pdf"],
-        key="chatbot_file_uploader" # ¡Un 'key' único!
+        key="chatbot_file_uploader"
     )
     
-    # --- ¡NUEVA! Lógica de carga de documento ---
     if uploaded_doc is not None:
-        # Usamos un 'if' con una variable de sesión para evitar 
-        # que se recargue y borre el chat con cada acción.
         if "documento_analizado" not in st.session_state or st.session_state.documento_analizado != uploaded_doc.name:
             with st.spinner(f"Analizando '{uploaded_doc.name}'..."):
                 contexto_documento = extraer_texto_del_documento(uploaded_doc)
                 if contexto_documento:
-                    # ¡Iniciamos un NUEVO chat con el contexto!
+                    
+                    # --- ¡EL NUEVO PROMPT DE SISTEMA (V1.7)! ---
                     st.session_state.chat_history = [
                         {
                             "role": "system",
                             "content": f"""
-                            Eres un asistente legal experto. Te han pasado el siguiente documento como contexto.
-                            Tu trabajo es responder a las preguntas del usuario basándote ÚNICA Y EXCLUSIVAMENTE en el texto de este documento.
-                            Si la respuesta no está en el texto, debes decir "La respuesta no se encuentra en el documento."
-                            No inventes información.
+                            Eres un Asistente Legal experto en análisis de documentos. Te han pasado el siguiente documento como contexto.
+
+                            TUS REGLAS:
+                            1.  **Basa tus respuestas SIEMPRE en el documento.**
+                            2.  **SÍ PUEDES USAR TU PROPIO RAZONAMIENTO** y habilidades matemáticas para analizar el contenido (ej. verificar cálculos, resumir, identificar riesgos).
+                            3.  Si te preguntan algo que NO está en el documento y NO se relaciona con él (ej. el clima, política, "quién es el presidente"), DEBES responder: "Mi función es analizar el documento proporcionado."
+                            
                             ---
                             CONTEXTO DEL DOCUMENTO (Nombre: {uploaded_doc.name}):
                             {contexto_documento}
@@ -507,69 +534,53 @@ def mostrar_pagina_chatbot():
                         },
                         {
                             "role": "assistant",
-                            "content": f"He leído el documento '{uploaded_doc.name}'. ¿Qué necesitas saber sobre él?"
+                            "content": f"He leído y analizado el documento '{uploaded_doc.name}'. ¿Qué necesitas que revise o calcule?"
                         }
                     ]
-                    st.session_state.documento_analizado = uploaded_doc.name # Marcamos que ya lo analizamos
+                    # --- FIN DEL NUEVO PROMPT ---
+                    
+                    st.session_state.documento_analizado = uploaded_doc.name 
                     st.success("Documento analizado. ¡Puedes empezar a chatear con él!")
                 else:
                     st.error("No se pudo extraer texto del documento.")
-                    
-    # --- Lógica de Chat (casi igual que antes) ---
-    
-    # Forzar el modelo rápido
-    modelo_chatbot = "gpt-4o-mini"
 
-    # Inicializar historial (si no se ha subido un doc)
+    # --- INICIALIZACIÓN DE CHAT (SI NO HAY DOC) ---
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = [
-            {"role": "assistant", "content": "Hola, soy el asistente legal. Sube un documento para analizar o hazme una pregunta general (sin contexto)."}
+            {"role": "assistant", "content": "Hola, soy el asistente legal. Sube un documento para analizar o hazme una pregunta general."}
         ]
 
     # --- 1. PINTAR EL HISTORIAL ANTIGUO (CON FILTRO) ---
     for message in st.session_state.chat_history:
-        
-        # --- ¡EL ARREGLO ESTÁ AQUÍ! ---
-        # Solo muestra los mensajes si NO son del "sistema"
-        if message["role"] != "system":
+        if message["role"] != "system": # Oculta el prompt del sistema
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
-    # --- FIN DEL ARREGLO ---
 
-    # --- 2. PEDIR NUEVO INPUT (Se pega al fondo) ---
-    # (Esto PINTA la caja de texto en la parte inferior)
+    # --- 2. PEDIR NUEVO INPUT (Lógica de V1.7) ---
     if prompt := st.chat_input("Escribe tu pregunta aquí..."):
         
-        # --- ¡INICIO DE CAMBIOS! ---
-        
-        # 1. Guardar mensaje del usuario en la memoria
+        # Guardar mensaje del usuario en la memoria
         st.session_state.chat_history.append({"role": "user", "content": prompt})
         
-        # (¡BORRAMOS EL 'with st.chat_message("user")' DE AQUÍ!)
+        # (¡No pintamos aquí! Usamos st.rerun())
 
-        # 2. Generar respuesta de la IA (¡NO LA PINTAMOS AÚN!)
-        with st.spinner("Pensando..."): # El spinner SÍ está bien aquí
+        # Generar respuesta de la IA
+        with st.spinner("Analizando..."):
             respuesta_ia = llamar_chat_ia(
                 st.session_state.chat_history, 
                 modelo_chatbot
             )
             
             if respuesta_ia:
-                # 3. Guardar respuesta de la IA en la memoria
+                # Guardar respuesta de la IA en la memoria
                 st.session_state.chat_history.append(
                     {"role": "assistant", "content": respuesta_ia}
                 )
             else:
                 st.error("No se pudo obtener respuesta de la IA.")
         
-        # (¡BORRAMOS EL 'with st.chat_message("assistant")' DE AQUÍ!)
-        
-        # 4. Forzar un refresco de la página
-        # Esto hace que el script se reinicie y el 'for' loop 
-        # de arriba pinte los mensajes nuevos.
+        # Forzar un refresco de la página
         st.rerun()
-        
-        # --- FIN DE CAMBIOS ---
 
 # --- 4. FUNCIONES DE LOGIN Y LOGOUT ---
 def mostrar_login():

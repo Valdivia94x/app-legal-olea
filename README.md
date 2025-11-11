@@ -1,49 +1,37 @@
-# 🤖 Olea Asistente Legal (app-legal-olea) V1.3
+# 🤖 Asistente Legal Rápido (app-legal-olea) V2.1
 
-Aplicación en Streamlit y Python que utiliza IA (OpenAI GPT-5 y GPT-4o-Mini) para asistir en tareas legales.
+Aplicación en Streamlit y Python que utiliza IA (OpenAI GPT-5/Pro y GPT-4o) para asistir en tareas legales.
 
-Este proyecto V1.6 incluye un sistema de login seguro y una interfaz de pestañas con dos herramientas principales:
-
-1.  **Generador de Documentos:** Crea documentos "Generales" (basados en texto) o "Pagarés" (con tablas de amortización calculadas) usando plantillas de Word e IA para imitar el tono de un ejemplo.
-2.  **Chatbot Analizador:** Un chatbot (GPT-4o-Mini) que puede "leer" un `.docx` o `.pdf` subido por el usuario y responder preguntas específicas sobre su contenido.
+Este proyecto V2.1 (final) incluye:
+* Sistema de login seguro (agnóstico: `st.secrets` u `os.environ`).
+* Interfaz de pestañas (Generador y Chatbot).
+* **Generador de Documentos:** Crea documentos "Generales" (con listas V1.8) o "Pagarés" (con tablas V2.1 que incluyen **cálculos de IVA**).
+* **Chatbot Analizador:** Un chatbot V1.7 (GPT-4o) que puede leer y **razonar** sobre el contenido de archivos `.docx` y `.pdf`.
 
 ## 🚀 Componentes del Proyecto
 
 El sistema funciona con 5 archivos clave que deben estar en la misma carpeta:
 
-1.  **`app.py`**: El código fuente principal de la aplicación Streamlit. Contiene toda la lógica de la UI, el login, las pestañas, los "Cerebros" (llamadas a la API) y los "Ensambladores" (lógica de `python-docx`).
-2.  **`requirements.txt`**: La lista de dependencias de Python necesarias.
-3.  **`template_maestro.docx`**: El molde de Word para el flujo de "Documento General".
-4.  **`template_pagare.docx`**: El molde de Word para el flujo de "Pagaré" (contiene la tabla vacía).
-5.  **`logo.png` / `logoOscuro.png` / `favicon.png`**: Los archivos de imagen para la marca.
+1.  **`app.py`**: El código fuente principal (V2.1 agnóstico).
+2.  **`requirements.txt`**: La lista de dependencias (`streamlit`, `openai`, `python-docx`, `PyMuPDF`).
+3.  **`template_maestro.docx`**: El molde de Word para el flujo General (con estilo `Lista_Manual` V1.8).
+4.  **`template_pagare.docx`**: El molde de Word para el flujo Pagaré (V1.7, sin tabla).
+5.  **`.streamlit/config.toml`**: (Opcional, para forzar el modo oscuro).
+6.  **`logo.png` / `favicon.png`**: Imágenes de marca.
 
 ## ⚙️ Instalación (Local)
 
-1.  Clona este repositorio o descarga los archivos.
-2.  Asegúrate de tener Python 3.10+ instalado.
-3.  Instala las dependencias:
+1.  Instala las dependencias:
     ```bash
     pip install -r requirements.txt
     ```
-4.  Configura tu variable de entorno de OpenAI:
-    ```bash
-    # En PowerShell
-    $env:OPENAI_API_KEY = "sk-xxxxxxxxxxxxxx"
-    ```
+2.  Crea la carpeta de secretos locales: `.streamlit/secrets.toml` (asegúrate de que esté en `.gitignore`).
 
 ## ▶️ Ejecución (Local)
-
-Para correr la aplicación web en tu máquina local, usa el siguiente comando en tu terminal:
 
 ```bash
 streamlit run app.py
 ```
 
-La app se abrirá automáticamente en tu navegador en `http://localhost:8501`.
-
 ## ☁️ Despliegue (Deploy)
-
-Esta app está diseñada para desplegarse fácilmente en **Streamlit Community Cloud**.
-
-1.  Conecta este repositorio de GitHub a Streamlit Cloud.
-2.  Asegúrate de configurar el `OPENAI_API_KEY` en los **"Secrets"** de la app en Streamlit.
+Esta app está diseñada para desplegarse en cualquier servidor (Streamlit Cloud, Azure, AWS, On-Premise) ya que lee las credenciales desde st.secrets o (como fallback) desde os.environ.
