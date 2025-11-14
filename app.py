@@ -6,6 +6,7 @@ import streamlit as st
 from docx import Document
 import io
 import fitz
+from supabase import create_client, Client
 
 # --- 0. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -14,33 +15,55 @@ st.set_page_config(
     page_icon="favicon.png"
 )
 
-# --- 1. CONFIGURACIÓN DE USUARIO Y CONTRASEÑA ---
-USUARIO_CORRECTO = None
-PASSWORD_CORRECTO = None
+st.markdown(
+    """
+    <meta property="og:title" content="Olea Abogados - Asistente Legal IA">
+    <meta property="og:description" content="Herramienta de IA para la generación y análisis de documentos legales.">
+    <meta property="og:image" content="URL_PUBLICA_DE_TU_LOGO_AQUI">
+    """,
+    unsafe_allow_html=True
+)
 
-# Primero, intenta leer desde los "Secrets" de Streamlit Cloud (o local)
+# --- ¡NUEVO BLOQUE DE CREDENCIALES V2.3 (Doble Cliente)! ---
+OPENAI_API_KEY_VAL = None
+SUPABASE_URL_VAL = None
+SUPABASE_KEY_VAL = None
+SUPABASE_SERVICE_KEY_VAL = None # <-- ¡NUEVO!
+
+# Leer todas las llaves (Streamlit Cloud o Servidor de Nuria)
 try:
-    USUARIO_CORRECTO = st.secrets["USUARIO_CORRECTO"]
-    PASSWORD_CORRECTO = st.secrets["PASSWORD_CORRECTO"]
     OPENAI_API_KEY_VAL = st.secrets["OPENAI_API_KEY"]
-    # st.session_state['deploy_mode'] = 'Streamlit Cloud' # Opcional para debug
+    SUPABASE_URL_VAL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY_VAL = st.secrets["SUPABASE_KEY"]
+    SUPABASE_SERVICE_KEY_VAL = st.secrets["SUPABASE_SERVICE_KEY"] # <-- ¡NUEVO!
 
-# Si falla (porque no estamos en Streamlit Cloud)...
 except (KeyError, FileNotFoundError):
-    # ...entonces, lee desde las Variables de Entorno del Sistema
-    # st.session_state['deploy_mode'] = 'Servidor Propio (Variables de Entorno)' # Opcional
-    USUARIO_CORRECTO = os.environ.get("USUARIO_CORRECTO")
-    PASSWORD_CORRECTO = os.environ.get("PASSWORD_CORRECTO")
     OPENAI_API_KEY_VAL = os.environ.get("OPENAI_API_KEY")
+    SUPABASE_URL_VAL = os.environ.get("SUPABASE_URL")
+    SUPABASE_KEY_VAL = os.environ.get("SUPABASE_KEY")
+    SUPABASE_SERVICE_KEY_VAL = os.environ.get("SUPABASE_SERVICE_KEY") # <-- ¡NUEVO!
 
-# Asignamos la llave de API al cliente de OpenAI
+# 1. Conectar a OpenAI (Sin cambios)
 try:
     client = openai.OpenAI(api_key=OPENAI_API_KEY_VAL)
 except Exception as e:
-    st.error(f"Error al conectar con OpenAI. ¿Configuraste las variables de entorno/secretos?")
+    st.error(f"Error fatal: No se pudo conectar a OpenAI. Revisa la API Key.")
     st.stop()
 
-# --- ¡FIN DEL BLOQUE DE CREDENCIALES! ---
+# 2. Conectar a Supabase (¡DOBLE CONEXIÓN!)
+try:
+    # Cliente ANÓNIMO (para el Login de todos)
+    supabase_anon: Client = create_client(SUPABASE_URL_VAL, SUPABASE_KEY_VAL)
+    
+    # Cliente ADMIN (¡LA LLAVE MAESTRA! Solo para el CRUD)
+    supabase_admin: Client = create_client(SUPABASE_URL_VAL, SUPABASE_SERVICE_KEY_VAL)
+except Exception as e:
+    st.error(f"Error fatal: No se pudo conectar a Supabase. Revisa las llaves de Supabase.")
+    st.stop()
+
+# --- FIN DEL BLOQUE NUEVO ---
+
+ADMIN_EMAIL = ["alejandro@neurya.com", "elisa@oleaabogados.com"]
 
 # --- 2. CONFIGURACIÓN GLOBAL Y COMPONENTES 1, 2, 3, 4 ---
 # (Todo nuestro código de "motor" va aquí, definido como funciones)
@@ -370,17 +393,32 @@ def mostrar_app_principal():
     # Guardamos el modelo en la memoria para que el chat lo vea
     st.session_state['modelo_seleccionado'] = modelo_seleccionado
 
+    # (Dentro de def mostrar_app_principal():)
+    
+    # --- ¡CAMBIO! Lógica de Pestañas Dinámica (V2.3) ---
     st.title("🤖 Asistente Legal")
+    
+    lista_pestañas = ["Generador de Documentos", "Chatbot Legal (Analizador)"]
+    
+    # Revisar si el usuario logueado es el Admin
+    if st.session_state.get('user_email') in ADMIN_EMAIL:
+        lista_pestañas.append("👑 Administración") # <-- Añade la pestaña Admin
+    
+    tabs = st.tabs(lista_pestañas)
+    
+    # Asignar contenido a las pestañas
+    with tabs[0]:
+        mostrar_pagina_generador(modelo_seleccionado) 
 
-    tab_generador, tab_chatbot = st.tabs(
-        ["Generador de Documentos", "Chatbot Legal (Demo)"]
-    )
-
-    with tab_generador:
-        mostrar_pagina_generador(modelo_seleccionado)
-
-    with tab_chatbot:
-        mostrar_pagina_chatbot()
+    with tabs[1]:
+        mostrar_pagina_chatbot() 
+        
+    # Si la pestaña Admin existe, asignarle su función
+    if len(tabs) == 3:
+        with tabs[2]:
+            mostrar_pagina_admin()
+            
+    # --- FIN DEL CAMBIO ---
 
 # --- 3. FUNCIONES DE WORKFLOW ---
 
@@ -470,6 +508,73 @@ def mostrar_pagina_generador(modelo_seleccionado):
                                 file_name="PAGARE_GENERADO.docx",
                                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                             )
+
+# --- PÁGINA DE ADMIN (V2.3 - CRUD) ---
+def mostrar_pagina_admin():
+    
+    st.title("Panel de Administración de Usuarios")
+
+    # 1. Crear Usuario (CREATE)
+    st.subheader("1. Crear Nuevo Usuario")
+    with st.form("create_user_form", clear_on_submit=True):
+        new_email = st.text_input("Email del nuevo usuario")
+        new_password = st.text_input("Contraseña temporal para el usuario", type="password")
+        create_button = st.form_submit_button("Crear Usuario")
+        
+        # --- ¡ESTE ES EL CÓDIGO NUEVO Y CORREGIDO (V2.4)! ---
+    if create_button:
+        if new_email and new_password:
+            try:
+                # ¡EL ARREGLO ESTÁ AQUÍ! 
+                # Pasamos los datos dentro de un diccionario "attributes"
+                user = supabase_admin.auth.admin.create_user(
+                    attributes={
+                        'email': new_email,
+                        'password': new_password,
+                        'email_confirm': True 
+                    }
+                )
+                st.success(f"¡Éxito! Usuario creado: {user.user.email}")
+            except Exception as e:
+                st.error(f"Error al crear usuario: {e}")
+        else:
+            st.warning("Por favor, llena ambos campos.")
+    # --- FIN DEL CÓDIGO NUEVO ---
+
+    st.markdown("---")
+    
+    # 2. Listar Usuarios (READ)
+    st.subheader("2. Usuarios Actuales")
+    # --- ¡ESTE ES EL CÓDIGO NUEVO Y CORREGIDO (V2.5)! ---
+    if st.button("Cargar Lista de Usuarios"):
+        try:
+            # Esta línea sigue igual
+            users = supabase_admin.auth.admin.list_users()
+
+            # ¡EL ARREGLO ESTÁ AQUÍ! 
+            # Iteramos sobre 'users' directamente, no 'users.users'
+            st.dataframe(
+                [{"email": u.email, "created_at": u.created_at, "id": u.id} for u in users]
+            )
+        except Exception as e:
+            st.error(f"Error al listar usuarios: {e}")
+    # --- FIN DEL CÓDIGO NUEVO ---
+
+    # 3. Borrar Usuario (DELETE)
+    st.markdown("---")
+    st.subheader("3. Borrar Usuario (¡Peligro!)")
+    with st.form("delete_user_form", clear_on_submit=True):
+        user_id_to_delete = st.text_input("Pega el 'ID' del usuario a borrar (de la tabla de arriba)")
+        delete_button = st.form_submit_button("Borrar Usuario Permanentemente")
+        
+        if delete_button and user_id_to_delete:
+            try:
+                # ¡Usamos el cliente ADMIN!
+                # ¡EL ARREGLO! El parámetro es 'id', no 'user_id'
+                supabase_admin.auth.admin.delete_user(id=user_id_to_delete) 
+                st.success(f"¡Éxito! Usuario {user_id_to_delete} borrado.")
+            except Exception as e:
+                st.error(f"Error al borrar usuario: {e}")
 
 # --- ¡NUEVA FUNCIÓN PARA EL CHATBOT! ---
 
@@ -582,30 +687,40 @@ def mostrar_pagina_chatbot():
         # Forzar un refresco de la página
         st.rerun()
 
-# --- 4. FUNCIONES DE LOGIN Y LOGOUT ---
+# --- LOGIN (V2.2 con Supabase) ---
 def mostrar_login():
     col1, col2, col3 = st.columns([1, 2, 1]) 
     with col2:
-        st.image("logoOscuro.png") 
-    
-    st.title("Asistente Legal")
+        st.image("logoOscuro.png")
 
+    st.title("Asistente Legal 🔒")
+    
     st.markdown("Por favor, inicia sesión para continuar.")
 
+    # --- 1. Formulario de Login ---
     with st.form("login_form"):
-        username = st.text_input("Usuario")
+        email = st.text_input("Email")
         password = st.text_input("Contraseña", type="password")
         submitted = st.form_submit_button("Iniciar Sesión")
 
         if submitted:
-            if username == USUARIO_CORRECTO and password == PASSWORD_CORRECTO:
+            try:
+                # Usamos el cliente ANÓNIMO para el login
+                session = supabase_anon.auth.sign_in_with_password({
+                    "email": email,
+                    "password": password
+                })
                 st.session_state['authenticated'] = True
+                st.session_state['user_email'] = session.user.email
                 st.rerun() 
-            else:
-                st.error("Usuario o contraseña incorrectos.")
+            except Exception as e:
+                st.error(f"Error de autenticación: Verifique su email o contraseña.")
 
 def logout():
     st.session_state['authenticated'] = False
+    st.session_state.pop('user_email', None) 
+    st.session_state.pop('chat_history', None)
+    st.session_state.pop('documento_analizado', None)
 
 # --- 5. LÓGICA PRINCIPAL (EL "SWITCH") ---
 
