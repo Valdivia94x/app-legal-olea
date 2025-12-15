@@ -5,7 +5,11 @@ import time
 import streamlit as st
 from docx import Document
 import io
+import math
+import time
 import fitz
+from azure.ai.formrecognizer import DocumentAnalysisClient
+from azure.core.credentials import AzureKeyCredential
 from supabase import create_client, Client
 
 # --- 0. CONFIGURACIÓN DE PÁGINA ---
@@ -81,50 +85,116 @@ NOMBRES_DE_ESTILOS = ['Titulo_1', 'Parrafo_Justificado', 'Lista_Numerada', 'Esti
 TEMPLATE_FILE_GENERAL = 'template_maestro.docx'
 TEMPLATE_FILE_PAGARE = 'template_pagare.docx'
 
-# --- COMPONENTE 2: El "Extractor Universal" (V1.9) ---
-@st.cache_data
-def extraer_texto_del_documento(archivo_subido):
+def procesar_pdf_con_azure(uploaded_file):
     """
-    Extractor inteligente V1.9: Lee .docx y .pdf
-    Toma un archivo subido por Streamlit (UploadedFile)
-    y devuelve una sola cadena de texto.
+    MOTOR AZURE V3.0 (SLICE & DICE):
+    Corta el PDF en micro-lotes de 2 páginas para burlar
+    el límite de 4MB del Free Tier.
     """
+    # 1. Credenciales
     try:
-        # 1. Leer el archivo en memoria una sola vez
-        file_bytes = archivo_subido.read()
-        
-        # 2. Decidir qué herramienta usar
-        if archivo_subido.type == "application/pdf":
-            # --- LÓGICA PARA PDF (NUEVO) ---
-            st.write("Detectado: PDF. Usando PyMuPDF (fitz)...")
-            texto_completo = []
-            with fitz.open(stream=file_bytes, filetype="pdf") as doc:
-                for page in doc:
-                    texto_completo.append(page.get_text())
-            return '\n'.join(texto_completo)
-
-        elif archivo_subido.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            # --- LÓGICA PARA DOCX (LA ANTIGUA) ---
-            st.write("Detectado: DOCX. Usando python-docx...")
-            doc = Document(io.BytesIO(file_bytes))
-            texto_completo = []
-            for parrafo in doc.paragraphs:
-                if parrafo.text.strip():
-                    texto_completo.append(parrafo.text)
-            for tabla in doc.tables:
-                for fila in tabla.rows:
-                    for celda in fila.cells:
-                        if celda.text.strip():
-                            texto_completo.append(celda.text)
-            return '\n'.join(texto_completo)
-        
-        else:
-            st.error(f"Tipo de archivo no soportado: {archivo_subido.type}")
-            return None
-            
-    except Exception as e:
-        st.error(f"Error al leer el archivo ({archivo_subido.name}): {e}")
+        endpoint = st.secrets["AZURE_FORM_ENDPOINT"]
+        key = st.secrets["AZURE_FORM_KEY"]
+    except:
+        st.error("❌ Faltan llaves de Azure.")
         return None
+
+    # 2. Configuración de Lotes
+    PAGINAS_POR_LOTE = 2  # 2 páginas suelen pesar menos de 4MB, es seguro.
+    
+    full_text_final = ""
+    
+    # Abrimos el PDF original en memoria
+    pdf_original = fitz.open(stream=uploaded_file.getvalue(), filetype="pdf")
+    total_pages = len(pdf_original)
+    total_batches = math.ceil(total_pages / PAGINAS_POR_LOTE)
+    
+    # Barra de progreso general
+    progress_bar = st.progress(0, text="🔪 Preparando el documento...")
+    
+    try:
+        # Creamos el cliente UNA sola vez
+        client = DocumentAnalysisClient(endpoint=endpoint, credential=AzureKeyCredential(key))
+        
+        # --- BUCLE DE LA VIDA (Iteramos por lotes) ---
+        for i in range(total_batches):
+            start = i * PAGINAS_POR_LOTE
+            end = min(start + PAGINAS_POR_LOTE, total_pages)
+            
+            progress_bar.progress(
+                int((i / total_batches) * 90), 
+                text=f"☁️ Procesando parte {i+1} de {total_batches} (Págs {start+1}-{end})..."
+            )
+            
+            # A. CREAR MINI-PDF EN MEMORIA
+            # Creamos un PDF vacío nuevo
+            pdf_chunk = fitz.open() 
+            # Copiamos las páginas del original al nuevo (start -> end)
+            pdf_chunk.insert_pdf(pdf_original, from_page=start, to_page=end-1)
+            
+            # Lo guardamos en bytes (memoria)
+            chunk_buffer = io.BytesIO()
+            pdf_chunk.save(chunk_buffer)
+            chunk_bytes = chunk_buffer.getvalue()
+            
+            # B. ENVIAR A AZURE (Ahora sí cabe porque es chiquito)
+            poller = client.begin_analyze_document(
+                "prebuilt-read", document=chunk_bytes
+            )
+            result = poller.result()
+            
+            # C. ACUMULAR TEXTO
+            for page in result.pages:
+                # OJO: Azure reinicia el conteo de páginas en cada lote (1, 2...),
+                # así que calculamos el número real para que se vea bonito.
+                real_page_num = start + page.page_number
+                full_text_final += f"\n--- Página {real_page_num} ---\n"
+                for line in page.lines:
+                    full_text_final += line.content + "\n"
+            
+            # Cerramos el mini-pdf para liberar RAM
+            pdf_chunk.close()
+
+        progress_bar.progress(100, text="✅ ¡Documento completo reconstruido!")
+        time.sleep(1)
+        progress_bar.empty()
+        
+        return full_text_final
+
+    except Exception as e:
+        st.error(f"❌ Error durante el procesamiento por lotes: {e}")
+        return None
+
+def extraer_texto_del_documento(uploaded_file):
+    
+    # CASO 1: DOCX (Sigue igual)
+    if uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        try:
+            doc = Document(io.BytesIO(uploaded_file.getvalue()))
+            text = "\n".join([para.text for para in doc.paragraphs])
+            return text
+        except Exception as e:
+            st.error(f"Error DOCX: {e}")
+            return None
+
+    # CASO 2: PDF
+    elif uploaded_file.type == "application/pdf":
+        # A. Intento Rápido (Digital)
+        try:
+            with fitz.open(stream=uploaded_file.getvalue(), filetype="pdf") as doc:
+                text = "".join([page.get_text() for page in doc])
+        except:
+            text = ""
+            
+        # Si tiene más de 50 letras, es digital.
+        if len(text.strip()) > 50:
+            st.info("📄 PDF Digital detectado. Procesamiento inmediato.")
+            return text
+        
+        # B. Si es escaneado -> AZURE (Aquí ocurre la magia)
+        else:
+            st.warning("📸 PDF Escaneado o Imagen detectada. Usando Azure AI Enterprise...")
+            return procesar_pdf_con_azure(uploaded_file)
 
 @st.cache_data
 def generar_documento_ia_general(instruccion_usuario, texto_de_ejemplo, modelo_ia):
@@ -601,7 +671,7 @@ def mostrar_pagina_chatbot():
     CON PERMISO DE RAZONAR SOBRE EL DOCUMENTO.
     """
     
-    st.warning("⚠️ **Modo Demo:** Este chatbot es una IA generativa (gpt-4o). Sus respuestas pueden ser imprecisas. Usa tu criterio profesional.")
+    st.warning("⚠️ Este chatbot es una IA generativa (gpt-5). Sus respuestas pueden ser imprecisas. Usa tu criterio profesional.")
     
     # Forzar el modelo rápido
     modelo_chatbot = "gpt-4o" # ¡Cambiamos a gpt-4o (no el mini)!
